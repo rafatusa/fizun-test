@@ -1,14 +1,14 @@
-# fizun-test
+# fizun-test-feature-ec2-docker
 
-> **Branch**: `main` — deployed by DevOps Agent
+> **Branch**: `feature-ec2-docker` — deployed by DevOps Agent
 
 ## 🚀 Deployment Info
 
 | Field | Value |
 |-------|-------|
 | **App** | nginx |
-| **Target** | EC2 Direct |
-| **Branch** | `main` |
+| **Target** | EC2 + Docker |
+| **Branch** | `feature-ec2-docker` |
 | **Region** | us-east-1 |
 | **Live URL** | http://54.196.98.106 |
 | **Last Deploy** | 2026-03-14 13:18 UTC |
@@ -16,13 +16,15 @@
 ## 🏗 Infrastructure
 
 - **Infrastructure**: AWS EC2 instance
-- **Config**: Ansible playbook
+- **Containerization**: Docker (installed via Ansible)
+- **Image**: Custom nginx Docker image built on EC2
+- **Config**: Ansible playbook (installs Docker, builds image, runs container)
 - **State**: S3 Terraform backend
 
 ## ⚙️ Pipeline
 
 ```
-Terraform → Ansible (direct install) → Verify → Notify
+Terraform → Ansible (install Docker → build image → run container) → Verify → Notify
 ```
 
 ## 📁 Key Files
@@ -30,16 +32,26 @@ Terraform → Ansible (direct install) → Verify → Notify
 | File | Purpose |
 |------|---------|
 | `terraform/main.tf` | AWS infrastructure definition |
-| `ansible/playbook.yml` | Server configuration & app setup |
+| `ansible/playbook.yml` | Docker install, image build & container run |
+| `ansible/Dockerfile` | nginx Docker image definition |
 | `.github/workflows/deploy.yml` | CI/CD deploy pipeline |
 | `.github/workflows/destroy.yml` | Infrastructure teardown |
 
+## 🐳 Docker Details
+
+| Setting | Value |
+|---------|-------|
+| **Base Image** | `nginx:alpine` |
+| **Container Name** | `nginx` |
+| **Host Port** | `80` |
+| **Container Port** | `80` |
+| **Restart Policy** | `always` |
 
 ## 🔧 How to Deploy
 
-1. Push changes to branch `main`
+1. Push changes to branch `feature-ec2-docker`
 2. GitHub Actions will automatically trigger
-3. Or use the DevOps Agent bot: `/trigger fizun-test`
+3. Or use the DevOps Agent bot: `/trigger fizun-test-feature-ec2-docker`
 
 ## 💣 How to Destroy
 
