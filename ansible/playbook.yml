@@ -1,120 +1,98 @@
 ---
-- name: Deploy nginx on EC2
+- name: Deploy nginx in Docker on EC2
   hosts: all
   become: yes
   vars:
     app_name: nginx
-    web_root: /var/www/html
-
-  handlers:
-    - name: reload nginx
-      service:
-        name: nginx
-        state: reloaded
-
-    - name: restart nginx
-      service:
-        name: nginx
-        state: restarted
+    ansible_user: ubuntu
 
   tasks:
-    - name: Update apt cache
+    - name: Install dependencies
       apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
         update_cache: yes
-        cache_valid_time: 3600
 
-    - name: Install nginx
-      apt:
-        name: nginx
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
         state: present
 
-    - name: Ensure nginx is started and enabled
+    - name: Add Docker repo
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable"
+        state: present
+
+    - name: Install Docker CE
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker
       service:
-        name: nginx
+        name: docker
         state: started
         enabled: yes
 
-    - name: Ensure web root directory exists
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Reset SSH connection so group change takes effect
+      meta: reset_connection
+
+    - name: Wipe old app files to prevent stale file serving
       file:
-        path: "{{ web_root }}"
+        path: /opt/app
+        state: absent
+      ignore_errors: yes
+
+    - name: Recreate app directory
+      file:
+        path: /opt/app
         state: directory
-        owner: www-data
-        group: www-data
-        mode: "0755"
+        mode: '0755'
 
-    - name: Check if index.html exists in repo
-      stat:
-        path: "{{ playbook_dir }}/../index.html"
-      delegate_to: localhost
-      register: index_html_stat
-
-    - name: Deploy index.html from repo
+    - name: Copy app files (full repo sync)
       copy:
-        src: ../index.html
-        dest: "{{ web_root }}/index.html"
-        owner: www-data
-        group: www-data
-        mode: "0644"
-      when: index_html_stat.stat.exists
-      notify: reload nginx
+        src: ../
+        dest: /opt/app/
+        mode: '0755'
 
-    - name: Deploy default index.html
-      copy:
-        content: |
-          <!DOCTYPE html>
-          <html lang="en">
-          <head><meta charset="UTF-8"><title>{{ app_name }}</title></head>
-          <body style="font-family:Arial,sans-serif;display:flex;justify-content:center;
-                       align-items:center;height:100vh;margin:0;background:#f0f2f5;">
-            <div style="text-align:center;background:white;padding:40px 60px;
-                        border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.1);">
-              <h1>{{ app_name }}</h1>
-              <p>Deployed with Ansible</p>
-            </div>
-          </body>
-          </html>
-        dest: "{{ web_root }}/index.html"
-        owner: www-data
-        group: www-data
-        mode: "0644"
-      when: not index_html_stat.stat.exists
-      notify: reload nginx
+    - name: Stop existing container
+      shell: docker stop app || true
 
-    - name: Configure nginx default site
-      copy:
-        content: |
-          server {
-              listen 80 default_server;
-              listen [::]:80 default_server;
+    - name: Remove existing container
+      shell: docker rm app || true
 
-              root {{ web_root }};
-              index index.html index.htm;
+    - name: Remove old image to force rebuild
+      shell: docker rmi app:latest || true
 
-              server_name _;
+    - name: Build image
+      shell: docker build --no-cache -t app:latest /opt/app/
 
-              location / {
-                  try_files $uri $uri/ =404;
-              }
-          }
-        dest: /etc/nginx/sites-available/default
-        owner: root
-        group: root
-        mode: "0644"
-      notify: reload nginx
+    - name: Run container
+      shell: docker run -d --name app -p 80:80 --restart always app:latest
 
-    - name: Ensure default site is enabled
-      file:
-        src: /etc/nginx/sites-available/default
-        dest: /etc/nginx/sites-enabled/default
-        state: link
-      notify: reload nginx
+    - name: Wait for container to be ready
+      pause:
+        seconds: 5
 
-    - name: Verify nginx configuration is valid
-      command: nginx -t
-      changed_when: false
-
-    - name: Ensure nginx is running after configuration
-      service:
-        name: nginx
-        state: started
-        enabled: yes
+    - name: Verify container is running
+      shell: "docker ps --filter name=app --filter status=running --format '{{ '{{' }}.Names{{ '}}' }}'"
+      register: result
+      retries: 3
+      delay: 5
+      until: result.stdout != ""
+      become: yes
